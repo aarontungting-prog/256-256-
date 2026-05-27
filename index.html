@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sprite 批次標準化工具 (Godot 最終輸出版)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+  body {
+    background: #1e1e1e;
+    color: #f0f0f0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    padding: 20px;
+    margin: 0;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  
+  h1 {
+    font-size: 24px;
+    margin-top: 0;
+    color: #4CAF50;
+    border-bottom: 2px solid #333;
+    padding-bottom: 10px;
+  }
+
+  /* 縮圖列表區塊：包含檔名文字，支援橫向滾動 */
+  .thumb-container {
+    display: flex;
+    overflow-x: auto;
+    gap: 15px;
+    padding: 15px 5px;
+    margin-bottom: 20px;
+    border-bottom: 1px dashed #555;
+    min-height: 90px;
+    align-items: flex-start;
+  }
+
+  .thumb-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 80px;
+    flex-shrink: 0;
+  }
+
+  .thumb {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    background: #333;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: all 0.2s;
+  }
+
+  .thumb.selected {
+    border-color: #4CAF50;
+    opacity: 1;
+    transform: scale(1.05);
+    background: #444;
+  }
+
+  .thumb-label {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 8px;
+    width: 100%;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thumb-label.selected-text {
+    color: #4CAF50;
+    font-weight: bold;
+  }
+
+  /* 預覽畫布：保持像素風格 */
+  canvas {
+    border: 1px solid #888;
+    background: #2b2b2b;
+    image-rendering: pixelated; 
+    margin-top: 10px;
+    display: block;
+    cursor: grab;
+  }
+
+  canvas:active {
+    cursor: grabbing;
+  }
+
+  .main-layout {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .controls-panel {
+    flex: 1;
+    min-width: 300px;
+  }
+
+  .preview-panel {
+    flex: 0 0 auto;
+  }
+  
+  .row {
+    margin: 12px 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  
+  .row label {
+    flex: 0 0 90px;
+    font-size: 14px;
+  }
+
+  .row input[type="number"], .row input[type="text"] {
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #333;
+    color: white;
+    font-size: 14px;
+    outline: none;
+  }
+  
+  .row input[type="number"]:focus, .row input[type="text"]:focus {
+    border-color: #4CAF50;
+  }
+
+  .row input[type="number"] { width: 70px; }
+  
+  #outputNameInput {
+    flex: 1;
+    min-width: 150px;
+    font-weight: bold;
+    color: #4CAF50;
+  }
+
+  .panel-container {
+    background: #2a2a2a;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    border: 1px solid #444;
+  }
+
+  .panel-title {
+    font-size: 14px;
+    color: #aaa;
+    margin-bottom: 12px;
+    font-weight: bold;
+    border-bottom: 1px solid #444;
+    padding-bottom: 6px;
+  }
+
+  .radio-group { display: flex; gap: 10px; }
+  .radio-group label {
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    background: #3a3a3a;
+    padding: 8px 12px;
+    border-radius: 6px;
+    flex: 1;
+    justify-content: center;
+    border: 1px solid transparent;
+  }
+  .radio-group label:hover { background: #444; }
+  .radio-group input[type="radio"] { margin-right: 6px; }
+
+  .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+  .checkbox-row {
+    display: flex; align-items: center; background: #3a3a3a;
+    padding: 10px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .checkbox-row:hover { background: #444; }
+  .checkbox-row label { margin-left: 10px; cursor: pointer; font-size: 14px; flex: 1; }
+  
+  input[type="file"] { width: 100%; font-size: 14px; background: #333; padding: 10px; border-radius: 6px; color: white; border: 1px dashed #666; cursor: pointer; }
+  
+  .btn-group { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    padding: 12px 16px; cursor: pointer; color: white; border: none;
+    border-radius: 6px; font-size: 14px; font-weight: bold;
+    transition: background 0.2s, transform 0.1s;
+    flex: 1;
+  }
+  button:active { transform: scale(0.98); }
+
+  .btn-sync { background: #FF9800; width: 100%; margin-top: 10px; } .btn-sync:hover { background: #e68a00; }
+  .btn-save { background: #2196F3; } .btn-save:hover { background: #1976D2; }
+  .btn-zip { background: #9C27B0; } .btn-zip:hover { background: #7B1FA2; }
+
+</style>
+</head>
+
+<body>
+
+<h1>Sprite 批次標準化工具 (Godot 專用)</h1>
+
+<div class="row">
+  <input type="file" id="fileInput" accept="image/png, image/jpeg, image/webp" multiple title="選擇多張圖片">
+</div>
+
+<div class="thumb-container" id="thumbList">
+  <span style="color: #666; font-size: 14px; padding: 10px;">請先上傳圖片以開始作業...</span>
+</div>
+
+<div class="main-layout">
+  
+  <div class="controls-panel">
+    
+    <div class="panel-container">
+      <div class="panel-title">全域標準化設定 (套用於所有圖片)</div>
+      <div class="row">
+        <label>輸出尺寸：</label>
+        <input type="number" id="canvasSize" value="256" class="global-setting">
+        
+        <label>角色高度：</label>
+        <input type="number" id="targetHeight" value="190" class="global-setting">
+        
+        <label>腳底位置 Y：</label>
+        <input type="number" id="footY" value="235" class="global-setting">
+      </div>
+      <div class="checkbox-row" style="margin-top:10px;">
+        <input type="checkbox" id="removeGreen" class="global-setting" checked>
+        <label for="removeGreen">去除綠幕背景 (保守模式，保留暗色像素)</label>
+      </div>
+    </div>
+
+    <div class="panel-container" style="border-color: #4CAF50; border-width: 2px;">
+      <div class="panel-title" style="color: #4CAF50; border-bottom-color: #334e33;">單張微調設定 (目前選中的圖片)</div>
+      
+      <div class="row" style="margin-bottom: 15px;">
+        <label style="color:#4CAF50;">輸出檔名：</label>
+        <input type="text" id="outputNameInput" placeholder="輸入自訂檔名 (免副檔名)">
+      </div>
+
+      <div class="radio-group">
+        <label><input type="radio" name="dragMode" value="X" checked>X 軸微調 (左右拖曳)</label>
+        <label><input type="radio" name="dragMode" value="Y">Y 軸微調 (上下拖曳)</label>
+      </div>
+      <div class="row" style="margin-top:15px;">
+        <label>水平偏移 X：</label>
+        <input type="number" id="offsetX" value="0">
+        <label>垂直偏移 Y：</label>
+        <input type="number" id="offsetY" value="0">
+      </div>
+      <button class="btn-sync" onclick="applyOffsetToAll()">
+        套用目前偏移量 (X/Y) 至【全部圖片】
+      </button>
+    </div>
+
+    <div class="panel-container">
+      <div class="panel-title">預覽輔助線 (僅供參考，不匯出)</div>
+      <div class="checkbox-group">
+        <label class="checkbox-row">
+          <input type="checkbox" id="showAdvancedGuides" class="global-setting">
+          <label>顯示進階輔助線 (藍/橘比例線)</label>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="showGridGuides" class="global-setting">
+          <label>顯示九宮格輔助線 (淡藍三分線)</label>
+        </label>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn-save" onclick="downloadCurrent()">下載【單張】PNG</button>
+      <button class="btn-zip" onclick="downloadAllAsZip()">打包下載【全部】(ZIP)</button>
+    </div>
+  </div>
+
+  <div class="preview-panel">
+    <canvas id="canvas" width="256" height="256"></canvas>
+  </div>
+
+</div>
+
+<script>
+// --- 核心資料結構 ---
+let imageList = [];
+let currentIndex = -1;
+
+// 建立專用於匯出的乾淨畫布
+const cleanExportCanvas = document.createElement("canvas");
+const fileInput = document.getElementById("fileInput");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const thumbList = document.getElementById("thumbList");
+const outputNameInput = document.getElementById("outputNameInput");
+
+// ==========================================
+// 1. 核心檔名清理函式 (Final Naming Handling)
+// ==========================================
+function sanitizeFileBase(name) {
+  if (name === null || name === undefined) return "sprite";
+  
+  // 轉字串並去前後空白
+  let sanitized = String(name).trim();
+  
+  // 空白換成底線
+  sanitized = sanitized.replace(/\s+/g, '_');
+  
+  // 移除不安全字元: / \ : * ? " < > |
+  sanitized = sanitized.replace(/[\/\\:*?"<>|]/g, '');
+  
+  // 移除結尾多餘的句點
+  sanitized = sanitized.replace(/\.+$/, '');
+  
+  // 移除開頭與結尾多餘的底線
+  sanitized = sanitized.replace(/^_+|_+$/g, '');
+  
+  // 若清理後為空，回傳預設值
+  return sanitized === "" ? "sprite" : sanitized;
+}
+
+// 供電腦端瀏覽器下載檔案並釋放記憶體的共用函式
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  
+  // 延遲釋放 URL Object，確保下載觸發成功
+  setTimeout(() => URL.revokeObjectURL(url), 150);
+}
+
+
+// ==========================================
+// 2. 事件綁定與 UI 更新
+// ==========================================
+document.querySelectorAll('.global-setting').forEach(input => {
+  input.addEventListener('input', renderPreview);
+  input.addEventListener('change', renderPreview);
+});
+
+['offsetX', 'offsetY'].forEach(id => {
+  document.getElementById(id).addEventListener('input', (e) => {
+    if (currentIndex >= 0 && imageList[currentIndex]) {
+      imageList[currentIndex][id] = parseInt(e.target.value) || 0;
+      renderPreview();
+    }
+  });
+});
+
+// 使用者輸入檔名：即時過濾與更新
+outputNameInput.addEventListener('input', (e) => {
+  if (currentIndex < 0 || !imageList[currentIndex]) return;
+  
+  let val = e.target.value;
+  // 即時替換空白與不安全字元，讓使用者有感
+  let safeVal = val.replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g, '_');
+  
+  if (val !== safeVal) {
+    e.target.value = safeVal;
+  }
+  
+  imageList[currentIndex].outputName = safeVal;
+
+  const label = document.getElementById('thumb-label-' + currentIndex);
+  if (label) {
+    // 預先使用 sanitizeFileBase 確保顯示的是最終會輸出的字串形式
+    label.innerText = sanitizeFileBase(safeVal || imageList[currentIndex].originalBaseName);
+  }
+});
+
+// 離開檔名輸入框：防呆處理
+outputNameInput.addEventListener('blur', (e) => {
+  if (currentIndex < 0 || !imageList[currentIndex]) return;
+  
+  let val = e.target.value.trim();
+  let finalSafeName;
+
+  if (!val) {
+    // 若為空，改回原始檔名並進行過濾
+    finalSafeName = sanitizeFileBase(imageList[currentIndex].originalBaseName);
+  } else {
+    // 進行徹底的最終過濾 (處理結尾底線、句點等)
+    finalSafeName = sanitizeFileBase(val);
+  }
+
+  e.target.value = finalSafeName;
+  imageList[currentIndex].outputName = finalSafeName;
+  
+  const label = document.getElementById('thumb-label-' + currentIndex);
+  if (label) label.innerText = finalSafeName;
+});
+
+
+// ==========================================
+// 3. 圖片處理邏輯
+// ==========================================
+fileInput.addEventListener("change", async function(event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+
+  imageList = [];
+  currentIndex = 0;
+  thumbList.innerHTML = '讀取中...';
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // 取原始檔名(無副檔名)
+        const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+        // 初始載入時就先對原始檔名做一次清理
+        const initialSafeName = sanitizeFileBase(baseName);
+        
+        imageList.push({
+          file: file,
+          name: file.name,
+          originalBaseName: initialSafeName, 
+          outputName: initialSafeName,
+          img: img,
+          offsetX: 0, 
+          offsetY: 0
+        });
+        resolve();
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  
+  updateThumbnailUI();
+  selectImage(0);
+});
+
+function updateThumbnailUI() {
+  thumbList.innerHTML = '';
+  imageList.forEach((item, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'thumb-item';
+
+    const imgEl = document.createElement('img');
+    imgEl.src = item.img.src;
+    imgEl.className = index === currentIndex ? 'thumb selected' : 'thumb';
+    imgEl.onclick = () => selectImage(index);
+    
+    const label = document.createElement('div');
+    label.id = 'thumb-label-' + index;
+    label.className = index === currentIndex ? 'thumb-label selected-text' : 'thumb-label';
+    
+    // 確保列表顯示的是最乾淨的檔名
+    const displayName = sanitizeFileBase(item.outputName || item.originalBaseName);
+    label.innerText = displayName;
+    label.title = displayName;
+
+    wrapper.appendChild(imgEl);
+    wrapper.appendChild(label);
+    thumbList.appendChild(wrapper);
+  });
+}
+
+function selectImage(index) {
+  if (index < 0 || index >= imageList.length) return;
+  currentIndex = index;
+  
+  document.getElementById("offsetX").value = imageList[index].offsetX;
+  document.getElementById("offsetY").value = imageList[index].offsetY;
+  
+  // 更新檔名輸入框，確保顯示安全檔名
+  outputNameInput.value = sanitizeFileBase(imageList[index].outputName || imageList[index].originalBaseName);
+  
+  updateThumbnailUI();
+  renderPreview();
+}
+
+function applyOffsetToAll() {
+  if (currentIndex < 0) return;
+  const currentX = imageList[currentIndex].offsetX;
+  const currentY = imageList[currentIndex].offsetY;
+  
+  imageList.forEach(item => {
+    item.offsetX = currentX;
+    item.offsetY = currentY;
+  });
+  alert(`已將偏移量 (X: ${currentX}, Y: ${currentY}) 套用至全部 ${imageList.length} 張圖片！`);
+  renderPreview();
+}
+
+// 核心處理：將圖片去背並畫在指定乾淨畫布 (供預覽底層或匯出用)
+function processToCleanCanvas(item, targetCanvas) {
+  const tCtx = targetCanvas.getContext("2d");
+  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  const targetHeight = parseInt(document.getElementById("targetHeight").value) || 190;
+  const footY = parseInt(document.getElementById("footY").value) || 235;
+  const removeGreen = document.getElementById("removeGreen").checked;
+  
+  targetCanvas.width = size;
+  targetCanvas.height = size;
+
+  const tempCanvas = document.createElement("canvas");
+  const tempCtx = tempCanvas.getContext("2d");
+  tempCanvas.width = item.img.width;
+  tempCanvas.height = item.img.height;
+  tempCtx.drawImage(item.img, 0, 0);
+
+  let imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  let data = imgData.data;
+
+  // 綠幕去背 (嚴格標準，不傷暗色)
+  if (removeGreen) {
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      if (g > 80 && g > r * 1.3 && g > b * 1.3) data[i + 3] = 0; 
+    }
+    tempCtx.putImageData(imgData, 0, 0);
+  }
+
+  // 尋找邊界
+  imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+  data = imgData.data;
+  let minX = tempCanvas.width, minY = tempCanvas.height, maxX = -1, maxY = -1;
+
+  for (let y = 0; y < tempCanvas.height; y++) {
+    for (let x = 0; x < tempCanvas.width; x++) {
+      if (data[(y * tempCanvas.width + x) * 4 + 3] > 20) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  tCtx.clearRect(0, 0, size, size);
+  tCtx.imageSmoothingEnabled = false; 
+  if (maxX < minX || maxY < minY) return;
+
+  const spriteWidth = maxX - minX + 1;
+  const spriteHeight = maxY - minY + 1;
+  const scale = targetHeight / spriteHeight; 
+
+  const drawWidth = spriteWidth * scale;
+  const drawHeight = spriteHeight * scale;
+  const drawX = ((size - drawWidth) / 2) + item.offsetX;
+  const drawY = (footY - drawHeight) + item.offsetY;
+
+  tCtx.drawImage(tempCanvas, minX, minY, spriteWidth, spriteHeight, drawX, drawY, drawWidth, drawHeight);
+}
+
+function renderPreview() {
+  if (currentIndex < 0 || !imageList[currentIndex]) return;
+  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  const footY = parseInt(document.getElementById("footY").value) || 235;
+  
+  canvas.width = size;
+  canvas.height = size;
+  ctx.clearRect(0, 0, size, size);
+  ctx.imageSmoothingEnabled = false;
+
+  // 渲染乾淨底圖
+  processToCleanCanvas(imageList[currentIndex], cleanExportCanvas);
+  ctx.drawImage(cleanExportCanvas, 0, 0);
+
+  // 渲染輔助線
+  const ratio = size / 256;
+  const showAdvanced = document.getElementById("showAdvancedGuides").checked;
+  const showGrid = document.getElementById("showGridGuides").checked;
+
+  if (showAdvanced) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(100, 150, 255, 0.4)";
+    [64, 96, 160, 192].forEach(x => {
+      ctx.beginPath(); ctx.moveTo(x * ratio, 0); ctx.lineTo(x * ratio, size); ctx.stroke();
+    });
+    ctx.strokeStyle = "rgba(255, 165, 0, 0.35)";
+    [64, 128, 192].forEach(y => {
+      ctx.beginPath(); ctx.moveTo(0, y * ratio); ctx.lineTo(size, y * ratio); ctx.stroke();
+    });
+  }
+
+  if (showGrid) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(135, 206, 235, 0.5)";
+    const third = size / 3;
+    ctx.beginPath(); ctx.moveTo(third, 0); ctx.lineTo(third, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(third * 2, 0); ctx.lineTo(third * 2, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, third); ctx.lineTo(size, third); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, third * 2); ctx.lineTo(size, third * 2); ctx.stroke();
+  }
+
+  // 綠色中心線與紅色腳底線
+  ctx.lineWidth = 1.5; 
+  ctx.strokeStyle = "rgba(0, 255, 0, 0.6)";
+  ctx.beginPath(); ctx.moveTo(size / 2, 0); ctx.lineTo(size / 2, size); ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255, 0, 0, 0.6)";
+  ctx.beginPath(); ctx.moveTo(0, footY); ctx.lineTo(size, footY); ctx.stroke();
+}
+
+
+// ==========================================
+// 4. 拖曳微調系統
+// ==========================================
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+let initialOffsetX = 0, initialOffsetY = 0;
+
+function getPointerPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  // 兼容滑鼠與觸控
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { 
+    x: (clientX - rect.left) * (canvas.width / rect.width), 
+    y: (clientY - rect.top) * (canvas.height / rect.height) 
+  };
+}
+
+function handleDragStart(e) {
+  if (currentIndex < 0) return;
+  // 阻擋預設滾動行為，確保拖曳順暢
+  if (e.type.startsWith('touch') && e.cancelable) e.preventDefault();
+
+  isDragging = true;
+  const pos = getPointerPos(e);
+  dragStartX = pos.x;
+  dragStartY = pos.y;
+  
+  initialOffsetX = imageList[currentIndex].offsetX;
+  initialOffsetY = imageList[currentIndex].offsetY;
+}
+
+function handleDragMove(e) {
+  if (!isDragging || currentIndex < 0) return;
+  if (e.type.startsWith('touch') && e.cancelable) e.preventDefault();
+
+  const pos = getPointerPos(e);
+  const dragMode = document.querySelector('input[name="dragMode"]:checked').value;
+
+  if (dragMode === 'X') {
+    imageList[currentIndex].offsetX = Math.round(initialOffsetX + (pos.x - dragStartX));
+    document.getElementById("offsetX").value = imageList[currentIndex].offsetX;
+  } else {
+    imageList[currentIndex].offsetY = Math.round(initialOffsetY + (pos.y - dragStartY));
+    document.getElementById("offsetY").value = imageList[currentIndex].offsetY;
+  }
+  renderPreview();
+}
+
+function handleDragEnd() { isDragging = false; }
+
+// 綁定滑鼠與觸控事件
+canvas.addEventListener('mousedown', handleDragStart);
+window.addEventListener('mousemove', handleDragMove);
+window.addEventListener('mouseup', handleDragEnd);
+canvas.addEventListener('touchstart', handleDragStart, { passive: false });
+canvas.addEventListener('touchmove', handleDragMove, { passive: false });
+window.addEventListener('touchend', handleDragEnd);
+window.addEventListener('touchcancel', handleDragEnd);
+
+
+// ==========================================
+// 5. 下載與匯出功能 (應用最終檔名過濾器)
+// ==========================================
+
+// 下載目前單張圖片
+function downloadCurrent() {
+  if (currentIndex < 0) { alert("請先上傳並選擇圖片！"); return; }
+  
+  const item = imageList[currentIndex];
+  // 確保輸出時重繪至乾淨畫布
+  processToCleanCanvas(item, cleanExportCanvas);
+  
+  const size = document.getElementById("canvasSize").value || 256;
+  
+  // 1. 取得 outputName
+  let baseName = item.outputName;
+  // 2. 退回機制：若無則用 originalBaseName
+  if (!baseName) baseName = item.originalBaseName;
+  // 3. 全面套用最終過濾器 (空值會在內部轉換為 "sprite")
+  baseName = sanitizeFileBase(baseName);
+  
+  const exportName = `${baseName}_${size}.png`;
+
+  cleanExportCanvas.toBlob(blob => {
+    triggerDownload(blob, exportName);
+  }, 'image/png');
+}
+
+// JSZip 批次打包所有圖片
+async function downloadAllAsZip() {
+  if (imageList.length === 0) { alert("請先上傳圖片！"); return; }
+  if (typeof JSZip === 'undefined') { alert("無法載入 JSZip，請確認網路連線。"); return; }
+
+  const zip = new JSZip();
+  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  
+  // 背景處理用畫布
+  const batchCanvas = document.createElement("canvas");
+  batchCanvas.width = size;
+  batchCanvas.height = size;
+
+  const usedBases = new Set();
+
+  for (let i = 0; i < imageList.length; i++) {
+    const item = imageList[i];
+    processToCleanCanvas(item, batchCanvas);
+    const blob = await new Promise(resolve => batchCanvas.toBlob(resolve, 'image/png'));
+    
+    // 取得並嚴格過濾檔名
+    let base = sanitizeFileBase(item.outputName || item.originalBaseName);
+    let finalBase = base;
+    
+    // 防重複檔名覆蓋機制
+    let counter = 2;
+    while (usedBases.has(finalBase)) {
+      finalBase = `${base}_${counter}`;
+      counter++;
+    }
+    usedBases.add(finalBase);
+    
+    const exportName = `${finalBase}_${size}.png`;
+    zip.file(exportName, blob);
+  }
+
+  zip.generateAsync({ type: "blob" }).then(function(content) {
+    triggerDownload(content, `godot_sprites_${size}.zip`);
+  });
+}
+</script>
+
+</body>
+</html>
