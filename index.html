@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sprite 批次標準化工具 (Godot 長武器擴充版)</title>
+<title>Sprite 批次標準化工具 v1.0 (Godot & LINE 雙效版)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <style>
@@ -26,7 +26,6 @@
     padding-bottom: 10px;
   }
 
-  /* 縮圖列表區塊：包含檔名文字，支援橫向滾動 */
   .thumb-container {
     display: flex;
     overflow-x: auto;
@@ -81,7 +80,6 @@
     font-weight: bold;
   }
 
-  /* 預覽畫布：保持像素風格 */
   canvas {
     border: 1px solid #888;
     background: #2b2b2b;
@@ -106,7 +104,7 @@
 
   .controls-panel {
     flex: 1;
-    min-width: 340px;
+    min-width: 360px;
   }
 
   .preview-panel {
@@ -206,12 +204,24 @@
   .btn-save { background: #2196F3; } .btn-save:hover { background: #1976D2; }
   .btn-zip { background: #9C27B0; } .btn-zip:hover { background: #7B1FA2; }
 
+  .info-text {
+    font-size: 12px;
+    color: #999;
+    margin-left: 110px;
+    margin-bottom: 15px;
+    line-height: 1.6;
+    background: #333;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border-left: 3px solid #FFC107;
+  }
+
 </style>
 </head>
 
 <body>
 
-<h1>Sprite 批次標準化工具 (Godot 專用)</h1>
+<h1>Sprite 批次標準化工具 v1.0 (Godot & LINE 雙效版)</h1>
 
 <div class="row">
   <input type="file" id="fileInput" accept="image/png, image/jpeg, image/webp" multiple title="選擇多張圖片">
@@ -231,10 +241,26 @@
       <div class="row">
         <label style="color: #FFC107; font-weight: bold;">輸出尺寸預設：</label>
         <select id="outputSize" class="global-setting" style="flex: 1; font-weight: bold;">
-          <option value="256x256" selected>256 x 256 (標準方形)</option>
-          <option value="384x256">384 x 256 (寬版武器擴充)</option>
-          <option value="512x256">512 x 256 (超寬武器擴充)</option>
+          <optgroup label="Godot 遊戲素材">
+            <option value="256x256" selected>256 x 256 (Godot 標準)</option>
+            <option value="384x256">384 x 256 (Godot 長武器)</option>
+            <option value="512x256">512 x 256 (Godot 超寬武器)</option>
+          </optgroup>
+          <optgroup label="LINE 貼圖素材">
+            <option value="370x320">370 x 320 (LINE 靜態貼圖最大尺寸)</option>
+            <option value="320x270">320 x 270 (LINE 動態貼圖 APNG 用)</option>
+            <option value="240x240">240 x 240 (LINE 主圖 Main Image)</option>
+            <option value="96x74">96 x 74 (LINE 聊天室縮圖 Icon)</option>
+          </optgroup>
         </select>
+      </div>
+      
+      <div class="info-text">
+        <b>💡 LINE 貼圖規格提醒：</b><br>
+        • <b>靜態貼圖：</b>圖檔最大 370x320，PNG，透明背景<br>
+        • <b>動態貼圖：</b>圖檔最大 320x270，正式上架需打包為 APNG (非 GIF)<br>
+        • <b>LINE 主圖：</b>240x240<br>
+        • <b>聊天室縮圖：</b>96x74
       </div>
 
       <div class="row">
@@ -312,7 +338,7 @@ const thumbList = document.getElementById("thumbList");
 const outputNameInput = document.getElementById("outputNameInput");
 
 // ==========================================
-// 1. 核心輔助函式
+// 1. 核心輔助函式與防呆下載
 // ==========================================
 function sanitizeFileBase(name) {
   if (name === null || name === undefined) return "sprite";
@@ -324,7 +350,12 @@ function sanitizeFileBase(name) {
   return sanitized === "" ? "sprite" : sanitized;
 }
 
+// 修正 1：加強版的 triggerDownload 防呆與延遲記憶體釋放
 function triggerDownload(blob, filename) {
+  if (!blob) {
+    alert("檔案產生失敗，請再試一次");
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.style.display = "none";
@@ -333,10 +364,11 @@ function triggerDownload(blob, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 150);
+  
+  // 延長至 1000ms 以確保大檔案穩定寫入
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// 取得當前畫布設定的寬高
 function getCanvasDims() {
   const sizeStr = document.getElementById("outputSize").value;
   const [w, h] = sizeStr.split('x').map(Number);
@@ -348,7 +380,38 @@ function getCanvasDims() {
 // ==========================================
 document.querySelectorAll('.global-setting').forEach(input => {
   input.addEventListener('input', renderPreview);
-  input.addEventListener('change', renderPreview);
+});
+
+// 修正 3：智慧連動 - 切換尺寸時自動設定最佳化的 footY 與 targetHeight
+document.getElementById("outputSize").addEventListener('change', (e) => {
+  const val = e.target.value;
+  const targetHeightInput = document.getElementById("targetHeight");
+  const footYInput = document.getElementById("footY");
+
+  if (val.includes("256")) { 
+    // Godot 系列 256x256, 384x256, 512x256
+    targetHeightInput.value = 190;
+    footYInput.value = 235;
+  } else if (val === "370x320") {
+    // LINE 靜態
+    targetHeightInput.value = 260;
+    footYInput.value = 300;
+  } else if (val === "320x270") {
+    // LINE 動態
+    targetHeightInput.value = 220;
+    footYInput.value = 250;
+  } else if (val === "240x240") {
+    // LINE 主圖
+    targetHeightInput.value = 180;
+    footYInput.value = 220;
+  } else if (val === "96x74") {
+    // LINE 縮圖
+    targetHeightInput.value = 60;
+    footYInput.value = 68;
+  }
+  
+  // 更新數值後重新渲染
+  renderPreview();
 });
 
 ['offsetX', 'offsetY'].forEach(id => {
@@ -471,7 +534,6 @@ function applyOffsetToAll() {
   renderPreview();
 }
 
-// 核心去背與定位邏輯 (加入 Width & Height 支援)
 function processToCleanCanvas(item, targetCanvas) {
   const tCtx = targetCanvas.getContext("2d");
   const { width, height } = getCanvasDims();
@@ -525,9 +587,7 @@ function processToCleanCanvas(item, targetCanvas) {
   const drawWidth = spriteWidth * scale;
   const drawHeight = spriteHeight * scale;
   
-  // 新的置中計算邏輯：使用 canvasWidth
   const drawX = ((width - drawWidth) / 2) + item.offsetX;
-  // 高度維持對齊腳底
   const drawY = (footY - drawHeight) + item.offsetY;
 
   tCtx.drawImage(tempCanvas, minX, minY, spriteWidth, spriteHeight, drawX, drawY, drawWidth, drawHeight);
@@ -549,7 +609,6 @@ function renderPreview() {
   const showAdvanced = document.getElementById("showAdvancedGuides").checked;
   const showGrid = document.getElementById("showGridGuides").checked;
 
-  // 比例換算：相對於基礎的 256
   const ratioX = width / 256;
   const ratioY = height / 256;
 
@@ -578,12 +637,10 @@ function renderPreview() {
     ctx.beginPath(); ctx.moveTo(0, thirdY * 2); ctx.lineTo(width, thirdY * 2); ctx.stroke();
   }
 
-  // 綠色中心線重算為 width / 2
   ctx.lineWidth = 1.5; 
   ctx.strokeStyle = "rgba(0, 255, 0, 0.6)";
   ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke();
 
-  // 紅色腳底線維持 footY
   ctx.strokeStyle = "rgba(255, 0, 0, 0.6)";
   ctx.beginPath(); ctx.moveTo(0, footY); ctx.lineTo(width, footY); ctx.stroke();
 }
@@ -648,7 +705,7 @@ window.addEventListener('touchcancel', handleDragEnd);
 
 
 // ==========================================
-// 5. 下載與匯出功能 (全新寬高檔名格式)
+// 5. 下載與 ZIP 批次打包
 // ==========================================
 function downloadCurrent() {
   if (currentIndex < 0) { alert("請先上傳並選擇圖片！"); return; }
@@ -660,7 +717,6 @@ function downloadCurrent() {
   let baseName = item.outputName || item.originalBaseName;
   baseName = sanitizeFileBase(baseName);
   
-  // 新的輸出檔名：寬x高
   const exportName = `${baseName}_${width}x${height}.png`;
 
   cleanExportCanvas.toBlob(blob => {
@@ -668,6 +724,7 @@ function downloadCurrent() {
   }, 'image/png');
 }
 
+// 修正 2：在 ZIP 迴圈內加入 Blob 產生失敗的防呆與警告
 async function downloadAllAsZip() {
   if (imageList.length === 0) { alert("請先上傳圖片！"); return; }
   if (typeof JSZip === 'undefined') { alert("無法載入 JSZip，請確認網路連線。"); return; }
@@ -684,7 +741,14 @@ async function downloadAllAsZip() {
   for (let i = 0; i < imageList.length; i++) {
     const item = imageList[i];
     processToCleanCanvas(item, batchCanvas);
+    
     const blob = await new Promise(resolve => batchCanvas.toBlob(resolve, 'image/png'));
+    
+    // Blob 防呆檢查
+    if (!blob) {
+      console.warn("圖片輸出失敗：", item.name);
+      continue;
+    }
     
     let base = sanitizeFileBase(item.outputName || item.originalBaseName);
     let finalBase = base;
