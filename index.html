@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sprite 批次標準化工具 (Godot 最終輸出版)</title>
+<title>Sprite 批次標準化工具 (Godot 長武器擴充版)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <style>
@@ -89,6 +89,8 @@
     margin-top: 10px;
     display: block;
     cursor: grab;
+    max-width: 100%;
+    height: auto;
   }
 
   canvas:active {
@@ -99,15 +101,17 @@
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
+    align-items: flex-start;
   }
 
   .controls-panel {
     flex: 1;
-    min-width: 300px;
+    min-width: 340px;
   }
 
   .preview-panel {
     flex: 0 0 auto;
+    max-width: 100%;
   }
   
   .row {
@@ -119,11 +123,11 @@
   }
   
   .row label {
-    flex: 0 0 90px;
+    flex: 0 0 100px;
     font-size: 14px;
   }
 
-  .row input[type="number"], .row input[type="text"] {
+  .row input[type="number"], .row input[type="text"], .row select {
     padding: 8px;
     border-radius: 4px;
     border: 1px solid #555;
@@ -133,7 +137,7 @@
     outline: none;
   }
   
-  .row input[type="number"]:focus, .row input[type="text"]:focus {
+  .row input[type="number"]:focus, .row input[type="text"]:focus, .row select:focus {
     border-color: #4CAF50;
   }
 
@@ -223,14 +227,21 @@
     
     <div class="panel-container">
       <div class="panel-title">全域標準化設定 (套用於所有圖片)</div>
+      
       <div class="row">
-        <label>輸出尺寸：</label>
-        <input type="number" id="canvasSize" value="256" class="global-setting">
-        
+        <label style="color: #FFC107; font-weight: bold;">輸出尺寸預設：</label>
+        <select id="outputSize" class="global-setting" style="flex: 1; font-weight: bold;">
+          <option value="256x256" selected>256 x 256 (標準方形)</option>
+          <option value="384x256">384 x 256 (寬版武器擴充)</option>
+          <option value="512x256">512 x 256 (超寬武器擴充)</option>
+        </select>
+      </div>
+
+      <div class="row">
         <label>角色高度：</label>
         <input type="number" id="targetHeight" value="190" class="global-setting">
         
-        <label>腳底位置 Y：</label>
+        <label style="flex: 0 0 90px; margin-left: 10px;">腳底位置 Y：</label>
         <input type="number" id="footY" value="235" class="global-setting">
       </div>
       <div class="checkbox-row" style="margin-top:10px;">
@@ -254,7 +265,7 @@
       <div class="row" style="margin-top:15px;">
         <label>水平偏移 X：</label>
         <input type="number" id="offsetX" value="0">
-        <label>垂直偏移 Y：</label>
+        <label style="flex: 0 0 80px; margin-left: 10px;">垂直偏移 Y：</label>
         <input type="number" id="offsetY" value="0">
       </div>
       <button class="btn-sync" onclick="applyOffsetToAll()">
@@ -271,7 +282,7 @@
         </label>
         <label class="checkbox-row">
           <input type="checkbox" id="showGridGuides" class="global-setting">
-          <label>顯示九宮格輔助線 (淡藍三分線)</label>
+          <label>顯示九宮格輔助線 (三分線)</label>
         </label>
       </div>
     </div>
@@ -293,7 +304,6 @@
 let imageList = [];
 let currentIndex = -1;
 
-// 建立專用於匯出的乾淨畫布
 const cleanExportCanvas = document.createElement("canvas");
 const fileInput = document.getElementById("fileInput");
 const canvas = document.getElementById("canvas");
@@ -302,31 +312,18 @@ const thumbList = document.getElementById("thumbList");
 const outputNameInput = document.getElementById("outputNameInput");
 
 // ==========================================
-// 1. 核心檔名清理函式 (Final Naming Handling)
+// 1. 核心輔助函式
 // ==========================================
 function sanitizeFileBase(name) {
   if (name === null || name === undefined) return "sprite";
-  
-  // 轉字串並去前後空白
   let sanitized = String(name).trim();
-  
-  // 空白換成底線
   sanitized = sanitized.replace(/\s+/g, '_');
-  
-  // 移除不安全字元: / \ : * ? " < > |
   sanitized = sanitized.replace(/[\/\\:*?"<>|]/g, '');
-  
-  // 移除結尾多餘的句點
   sanitized = sanitized.replace(/\.+$/, '');
-  
-  // 移除開頭與結尾多餘的底線
   sanitized = sanitized.replace(/^_+|_+$/g, '');
-  
-  // 若清理後為空，回傳預設值
   return sanitized === "" ? "sprite" : sanitized;
 }
 
-// 供電腦端瀏覽器下載檔案並釋放記憶體的共用函式
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -336,11 +333,15 @@ function triggerDownload(blob, filename) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  
-  // 延遲釋放 URL Object，確保下載觸發成功
   setTimeout(() => URL.revokeObjectURL(url), 150);
 }
 
+// 取得當前畫布設定的寬高
+function getCanvasDims() {
+  const sizeStr = document.getElementById("outputSize").value;
+  const [w, h] = sizeStr.split('x').map(Number);
+  return { width: w || 256, height: h || 256 };
+}
 
 // ==========================================
 // 2. 事件綁定與 UI 更新
@@ -359,41 +360,22 @@ document.querySelectorAll('.global-setting').forEach(input => {
   });
 });
 
-// 使用者輸入檔名：即時過濾與更新
 outputNameInput.addEventListener('input', (e) => {
   if (currentIndex < 0 || !imageList[currentIndex]) return;
-  
   let val = e.target.value;
-  // 即時替換空白與不安全字元，讓使用者有感
   let safeVal = val.replace(/[\/\\:*?"<>|]/g, '').replace(/\s+/g, '_');
   
-  if (val !== safeVal) {
-    e.target.value = safeVal;
-  }
+  if (val !== safeVal) e.target.value = safeVal;
   
   imageList[currentIndex].outputName = safeVal;
-
   const label = document.getElementById('thumb-label-' + currentIndex);
-  if (label) {
-    // 預先使用 sanitizeFileBase 確保顯示的是最終會輸出的字串形式
-    label.innerText = sanitizeFileBase(safeVal || imageList[currentIndex].originalBaseName);
-  }
+  if (label) label.innerText = sanitizeFileBase(safeVal || imageList[currentIndex].originalBaseName);
 });
 
-// 離開檔名輸入框：防呆處理
 outputNameInput.addEventListener('blur', (e) => {
   if (currentIndex < 0 || !imageList[currentIndex]) return;
-  
   let val = e.target.value.trim();
-  let finalSafeName;
-
-  if (!val) {
-    // 若為空，改回原始檔名並進行過濾
-    finalSafeName = sanitizeFileBase(imageList[currentIndex].originalBaseName);
-  } else {
-    // 進行徹底的最終過濾 (處理結尾底線、句點等)
-    finalSafeName = sanitizeFileBase(val);
-  }
+  let finalSafeName = val ? sanitizeFileBase(val) : sanitizeFileBase(imageList[currentIndex].originalBaseName);
 
   e.target.value = finalSafeName;
   imageList[currentIndex].outputName = finalSafeName;
@@ -419,9 +401,7 @@ fileInput.addEventListener("change", async function(event) {
     await new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        // 取原始檔名(無副檔名)
         const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-        // 初始載入時就先對原始檔名做一次清理
         const initialSafeName = sanitizeFileBase(baseName);
         
         imageList.push({
@@ -457,11 +437,8 @@ function updateThumbnailUI() {
     const label = document.createElement('div');
     label.id = 'thumb-label-' + index;
     label.className = index === currentIndex ? 'thumb-label selected-text' : 'thumb-label';
-    
-    // 確保列表顯示的是最乾淨的檔名
-    const displayName = sanitizeFileBase(item.outputName || item.originalBaseName);
-    label.innerText = displayName;
-    label.title = displayName;
+    label.innerText = sanitizeFileBase(item.outputName || item.originalBaseName);
+    label.title = label.innerText;
 
     wrapper.appendChild(imgEl);
     wrapper.appendChild(label);
@@ -475,8 +452,6 @@ function selectImage(index) {
   
   document.getElementById("offsetX").value = imageList[index].offsetX;
   document.getElementById("offsetY").value = imageList[index].offsetY;
-  
-  // 更新檔名輸入框，確保顯示安全檔名
   outputNameInput.value = sanitizeFileBase(imageList[index].outputName || imageList[index].originalBaseName);
   
   updateThumbnailUI();
@@ -492,20 +467,20 @@ function applyOffsetToAll() {
     item.offsetX = currentX;
     item.offsetY = currentY;
   });
-  alert(`已將偏移量 (X: ${currentX}, Y: ${currentY}) 套用至全部 ${imageList.length} 張圖片！`);
+  alert(`已將偏移量 (X: ${currentX}, Y: ${currentY}) 套用至全部圖片！`);
   renderPreview();
 }
 
-// 核心處理：將圖片去背並畫在指定乾淨畫布 (供預覽底層或匯出用)
+// 核心去背與定位邏輯 (加入 Width & Height 支援)
 function processToCleanCanvas(item, targetCanvas) {
   const tCtx = targetCanvas.getContext("2d");
-  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  const { width, height } = getCanvasDims();
   const targetHeight = parseInt(document.getElementById("targetHeight").value) || 190;
   const footY = parseInt(document.getElementById("footY").value) || 235;
   const removeGreen = document.getElementById("removeGreen").checked;
   
-  targetCanvas.width = size;
-  targetCanvas.height = size;
+  targetCanvas.width = width;
+  targetCanvas.height = height;
 
   const tempCanvas = document.createElement("canvas");
   const tempCtx = tempCanvas.getContext("2d");
@@ -516,7 +491,6 @@ function processToCleanCanvas(item, targetCanvas) {
   let imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
   let data = imgData.data;
 
-  // 綠幕去背 (嚴格標準，不傷暗色)
   if (removeGreen) {
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i], g = data[i + 1], b = data[i + 2];
@@ -525,7 +499,6 @@ function processToCleanCanvas(item, targetCanvas) {
     tempCtx.putImageData(imgData, 0, 0);
   }
 
-  // 尋找邊界
   imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
   data = imgData.data;
   let minX = tempCanvas.width, minY = tempCanvas.height, maxX = -1, maxY = -1;
@@ -541,7 +514,7 @@ function processToCleanCanvas(item, targetCanvas) {
     }
   }
 
-  tCtx.clearRect(0, 0, size, size);
+  tCtx.clearRect(0, 0, width, height);
   tCtx.imageSmoothingEnabled = false; 
   if (maxX < minX || maxY < minY) return;
 
@@ -551,7 +524,10 @@ function processToCleanCanvas(item, targetCanvas) {
 
   const drawWidth = spriteWidth * scale;
   const drawHeight = spriteHeight * scale;
-  const drawX = ((size - drawWidth) / 2) + item.offsetX;
+  
+  // 新的置中計算邏輯：使用 canvasWidth
+  const drawX = ((width - drawWidth) / 2) + item.offsetX;
+  // 高度維持對齊腳底
   const drawY = (footY - drawHeight) + item.offsetY;
 
   tCtx.drawImage(tempCanvas, minX, minY, spriteWidth, spriteHeight, drawX, drawY, drawWidth, drawHeight);
@@ -559,52 +535,57 @@ function processToCleanCanvas(item, targetCanvas) {
 
 function renderPreview() {
   if (currentIndex < 0 || !imageList[currentIndex]) return;
-  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  const { width, height } = getCanvasDims();
   const footY = parseInt(document.getElementById("footY").value) || 235;
   
-  canvas.width = size;
-  canvas.height = size;
-  ctx.clearRect(0, 0, size, size);
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
   ctx.imageSmoothingEnabled = false;
 
-  // 渲染乾淨底圖
   processToCleanCanvas(imageList[currentIndex], cleanExportCanvas);
   ctx.drawImage(cleanExportCanvas, 0, 0);
 
-  // 渲染輔助線
-  const ratio = size / 256;
   const showAdvanced = document.getElementById("showAdvancedGuides").checked;
   const showGrid = document.getElementById("showGridGuides").checked;
+
+  // 比例換算：相對於基礎的 256
+  const ratioX = width / 256;
+  const ratioY = height / 256;
 
   if (showAdvanced) {
     ctx.lineWidth = 1;
     ctx.strokeStyle = "rgba(100, 150, 255, 0.4)";
     [64, 96, 160, 192].forEach(x => {
-      ctx.beginPath(); ctx.moveTo(x * ratio, 0); ctx.lineTo(x * ratio, size); ctx.stroke();
+      const scaledX = x * ratioX;
+      ctx.beginPath(); ctx.moveTo(scaledX, 0); ctx.lineTo(scaledX, height); ctx.stroke();
     });
     ctx.strokeStyle = "rgba(255, 165, 0, 0.35)";
     [64, 128, 192].forEach(y => {
-      ctx.beginPath(); ctx.moveTo(0, y * ratio); ctx.lineTo(size, y * ratio); ctx.stroke();
+      const scaledY = y * ratioY;
+      ctx.beginPath(); ctx.moveTo(0, scaledY); ctx.lineTo(width, scaledY); ctx.stroke();
     });
   }
 
   if (showGrid) {
     ctx.lineWidth = 1;
     ctx.strokeStyle = "rgba(135, 206, 235, 0.5)";
-    const third = size / 3;
-    ctx.beginPath(); ctx.moveTo(third, 0); ctx.lineTo(third, size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(third * 2, 0); ctx.lineTo(third * 2, size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, third); ctx.lineTo(size, third); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, third * 2); ctx.lineTo(size, third * 2); ctx.stroke();
+    const thirdX = width / 3;
+    const thirdY = height / 3;
+    ctx.beginPath(); ctx.moveTo(thirdX, 0); ctx.lineTo(thirdX, height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(thirdX * 2, 0); ctx.lineTo(thirdX * 2, height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, thirdY); ctx.lineTo(width, thirdY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, thirdY * 2); ctx.lineTo(width, thirdY * 2); ctx.stroke();
   }
 
-  // 綠色中心線與紅色腳底線
+  // 綠色中心線重算為 width / 2
   ctx.lineWidth = 1.5; 
   ctx.strokeStyle = "rgba(0, 255, 0, 0.6)";
-  ctx.beginPath(); ctx.moveTo(size / 2, 0); ctx.lineTo(size / 2, size); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke();
 
+  // 紅色腳底線維持 footY
   ctx.strokeStyle = "rgba(255, 0, 0, 0.6)";
-  ctx.beginPath(); ctx.moveTo(0, footY); ctx.lineTo(size, footY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, footY); ctx.lineTo(width, footY); ctx.stroke();
 }
 
 
@@ -617,7 +598,6 @@ let initialOffsetX = 0, initialOffsetY = 0;
 
 function getPointerPos(e) {
   const rect = canvas.getBoundingClientRect();
-  // 兼容滑鼠與觸控
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
   return { 
@@ -628,7 +608,6 @@ function getPointerPos(e) {
 
 function handleDragStart(e) {
   if (currentIndex < 0) return;
-  // 阻擋預設滾動行為，確保拖曳順暢
   if (e.type.startsWith('touch') && e.cancelable) e.preventDefault();
 
   isDragging = true;
@@ -659,7 +638,6 @@ function handleDragMove(e) {
 
 function handleDragEnd() { isDragging = false; }
 
-// 綁定滑鼠與觸控事件
 canvas.addEventListener('mousedown', handleDragStart);
 window.addEventListener('mousemove', handleDragMove);
 window.addEventListener('mouseup', handleDragEnd);
@@ -670,45 +648,36 @@ window.addEventListener('touchcancel', handleDragEnd);
 
 
 // ==========================================
-// 5. 下載與匯出功能 (應用最終檔名過濾器)
+// 5. 下載與匯出功能 (全新寬高檔名格式)
 // ==========================================
-
-// 下載目前單張圖片
 function downloadCurrent() {
   if (currentIndex < 0) { alert("請先上傳並選擇圖片！"); return; }
   
   const item = imageList[currentIndex];
-  // 確保輸出時重繪至乾淨畫布
   processToCleanCanvas(item, cleanExportCanvas);
   
-  const size = document.getElementById("canvasSize").value || 256;
-  
-  // 1. 取得 outputName
-  let baseName = item.outputName;
-  // 2. 退回機制：若無則用 originalBaseName
-  if (!baseName) baseName = item.originalBaseName;
-  // 3. 全面套用最終過濾器 (空值會在內部轉換為 "sprite")
+  const { width, height } = getCanvasDims();
+  let baseName = item.outputName || item.originalBaseName;
   baseName = sanitizeFileBase(baseName);
   
-  const exportName = `${baseName}_${size}.png`;
+  // 新的輸出檔名：寬x高
+  const exportName = `${baseName}_${width}x${height}.png`;
 
   cleanExportCanvas.toBlob(blob => {
     triggerDownload(blob, exportName);
   }, 'image/png');
 }
 
-// JSZip 批次打包所有圖片
 async function downloadAllAsZip() {
   if (imageList.length === 0) { alert("請先上傳圖片！"); return; }
   if (typeof JSZip === 'undefined') { alert("無法載入 JSZip，請確認網路連線。"); return; }
 
   const zip = new JSZip();
-  const size = parseInt(document.getElementById("canvasSize").value) || 256;
+  const { width, height } = getCanvasDims();
   
-  // 背景處理用畫布
   const batchCanvas = document.createElement("canvas");
-  batchCanvas.width = size;
-  batchCanvas.height = size;
+  batchCanvas.width = width;
+  batchCanvas.height = height;
 
   const usedBases = new Set();
 
@@ -717,11 +686,9 @@ async function downloadAllAsZip() {
     processToCleanCanvas(item, batchCanvas);
     const blob = await new Promise(resolve => batchCanvas.toBlob(resolve, 'image/png'));
     
-    // 取得並嚴格過濾檔名
     let base = sanitizeFileBase(item.outputName || item.originalBaseName);
     let finalBase = base;
     
-    // 防重複檔名覆蓋機制
     let counter = 2;
     while (usedBases.has(finalBase)) {
       finalBase = `${base}_${counter}`;
@@ -729,12 +696,12 @@ async function downloadAllAsZip() {
     }
     usedBases.add(finalBase);
     
-    const exportName = `${finalBase}_${size}.png`;
+    const exportName = `${finalBase}_${width}x${height}.png`;
     zip.file(exportName, blob);
   }
 
   zip.generateAsync({ type: "blob" }).then(function(content) {
-    triggerDownload(content, `godot_sprites_${size}.zip`);
+    triggerDownload(content, `godot_sprites_${width}x${height}.zip`);
   });
 }
 </script>
